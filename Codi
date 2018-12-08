@@ -1,0 +1,189 @@
+#define HARDWARE_TYPE MD_MAX72XX::FC16_HW
+#define MAX_DEVICES 4
+
+#define CLK   13  // or SCK
+#define DIN  11  // or MOSI
+#define CS    10  // or SS
+#define DHTPIN 8
+#define DHTTYPE DHT11
+
+DHT dht(DHTPIN, DHTTYPE);
+MD_MAX72XX mx = MD_MAX72XX(HARDWARE_TYPE, CS, MAX_DEVICES);
+
+#define CHAR_SPACING  1 // pixels between characters
+#define BUF_SIZE  75
+char message[BUF_SIZE] = {""};
+
+DS1302 rtc(2, 3, 4); // Init the DS1302
+
+int estat = 0; // declaració estat incial = 0
+int maxInUse = 1; //change this variable to set how many MAX7219's you'll use
+
+////////////////////////////////////////////////////////////////////////////////////////
+
+void printText(uint8_t modStart, uint8_t modEnd, char *pMsg)
+{
+  uint8_t   state = 0;
+  uint8_t   curLen;
+  uint16_t  showLen;
+  uint8_t   cBuf[8];
+  int16_t   col = ((modEnd + 1) * COL_SIZE) - 1;
+
+  mx.control(modStart, modEnd, MD_MAX72XX::UPDATE, MD_MAX72XX::OFF);
+
+  do     // finite state machine to print the characters in the space available
+  {
+    switch (state)
+    {
+      case 0: // Load the next character from the font table
+        // if we reached end of message, reset the message pointer
+        if (*pMsg == '\0')
+        {
+          showLen = col - (modEnd * COL_SIZE);  // padding characters
+          state = 2;
+          break;
+        }
+
+        // retrieve the next character form the font file
+        showLen = mx.getChar(*pMsg++, sizeof(cBuf) / sizeof(cBuf[0]), cBuf);
+        curLen = 0;
+        state++;
+      // !! deliberately fall through to next state to start displaying
+
+      case 1: // display the next part of the character
+        mx.setColumn(col--, cBuf[curLen++]);
+
+        // done with font character, now display the space between chars
+        if (curLen == showLen)
+        {
+          showLen = CHAR_SPACING;
+          state = 2;
+        }
+        break;
+
+      case 2: // initialize state for displaying empty columns
+        curLen = 0;
+        state++;
+      // fall through
+
+      case 3:  // display inter-character spacing or end of message padding (blank columns)
+        mx.setColumn(col--, 0);
+        curLen++;
+        if (curLen == showLen)
+          state = 0;
+        break;
+
+      default:
+        col = -1;   // this definitely ends the do loop
+    }
+  } while (col >= (modStart * COL_SIZE));
+
+  mx.control(modStart, modEnd, MD_MAX72XX::UPDATE, MD_MAX72XX::ON);
+}
+
+
+////////////////////////////////////////////////////////////////////////////////////////
+
+void setup()
+{
+  // Set the clock to run-mode, and disable the write protection
+  rtc.halt(false);
+  rtc.writeProtect(false);
+  mx.begin();
+  dht.begin();
+
+  Serial.begin(57600);
+  Serial.print("\n[MD_MAX72XX Message Display]\nType a message for the scrolling display\nEnd message line with a newline");
+
+  //The following lines can be commented out to use the values already stored in the DS1302
+  //rtc.setDOW(TUESDAY);        // Set Day-of-Week to FRIDAY
+  //rtc.setTime(20, 00, 00);     // Set the time to 12:00:00 (24hr format)
+  //rtc.setDate(22, 11, 2018);   // Set the date to August 6th, 2010
+
+}
+
+////////////////////////////////////////////////////////////////////////////////////////
+void loop() {
+
+  if (digitalRead(7) == HIGH) {
+
+    estat++;
+
+    if (estat >= 6)
+      estat = 0;
+
+    delay(100);
+  }
+
+  if (estat == 0) {
+    borraPantalla();
+  } else if (estat == 1) {
+    mostraHora();
+  } else if (estat == 2) {
+    mostrarData();
+  } else if (estat == 3) {
+    mostrarDay();
+  } else if (estat == 4) {
+    mostrarTemperature();
+  } else {
+    borraPantalla();
+  }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////
+void borraPantalla() {
+
+  String txt = "";
+  txt.toCharArray(message, 6);
+  printText(0, MAX_DEVICES - 1, message);
+}
+
+////////////////////////////////////////////////////////////////////////////////////////
+void mostraHora() {
+
+  String txt = rtc.getTimeStr();
+  txt.toCharArray(message, 6);
+
+  printText(0, MAX_DEVICES - 1, message);
+}
+////////////////////////////////////////////////////////////////////////////////////////
+void mostrarData() {
+
+
+  String txt = rtc.getDateStr();
+  txt.toCharArray(message, 6);
+
+  printText(0, MAX_DEVICES - 1, message);
+}
+
+////////////////////////////////////////////////////////////////////////////////////////
+void mostrarDay() {
+
+
+  String txt = rtc.getDOWStr(FORMAT_SHORT);
+  txt.toCharArray(message, 6);
+
+  printText(0, MAX_DEVICES - 1, message);
+}
+
+////////////////////////////////////////////////////////////////////////////////////////
+void mostrarTemperature() {
+
+  float a = dht.readTemperature();
+  dtostrf(a, 2, 1, message);
+
+  if (a < 10) {
+
+    message[3] = (char)167;
+    message[4] = 'C';
+  } else {
+
+    message[4] = (char)167;
+    message[5] = 'C';
+
+
+    printText(0, MAX_DEVICES - 1, message);
+    Serial.print("Temperature: ");
+    Serial.println(a);
+  }
+}
